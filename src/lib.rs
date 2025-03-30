@@ -258,10 +258,14 @@ pub fn format_extension_id(raw_id: &[u8]) -> String {
     // Reference: golang implementation of Chrome extension ID format
 
     // First convert each byte to 2 hex characters
-    let hex_string = raw_id
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>();
+    let hex_string = {
+        let mut s = String::with_capacity(raw_id.len() * 2);
+        for &b in raw_id {
+            use std::fmt::Write;
+            write!(s, "{:02x}", b).unwrap();
+        }
+        s
+    };
 
     // Then convert each hex character to the Chrome extension ID format
     hex_string
