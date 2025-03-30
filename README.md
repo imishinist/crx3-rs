@@ -173,3 +173,7 @@ This project is licensed under the [MIT License](LICENSE) - see the LICENSE file
 ## References
 
 - [Chrome Extension Protobuf](https://raw.githubusercontent.com/chromium/chromium/main/components/crx_file/crx3.proto)
+
+## TODO
+
+- [ ] cargo-binstall support
