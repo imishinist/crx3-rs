@@ -238,6 +238,12 @@ pub struct Crx3File {
 }
 
 impl Crx3Builder {
+    /// Creates a new `Crx3Builder` from a private key and ZIP data.
+    ///
+    /// # Arguments
+    ///
+    /// * `private_key` - The RSA private key used for signing
+    /// * `zip_data` - The ZIP content as a byte vector
     pub fn new(private_key: RsaPrivateKey, zip_data: Vec<u8>) -> Self {
         Self {
             private_key,
@@ -245,8 +251,37 @@ impl Crx3Builder {
         }
     }
 
+    /// Creates a new `Crx3Builder` from a private key and ZIP file path.
+    ///
+    /// # Arguments
+    ///
+    /// * `private_key` - The RSA private key used for signing
+    /// * `zip_path` - The path to the ZIP file
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a new `Crx3Builder` instance or an error
     pub fn from_zip_path<P: AsRef<Path>>(private_key: RsaPrivateKey, zip_path: P) -> Result<Self> {
         let zip_data = fs::read(zip_path)?;
+        Ok(Self::new(private_key, zip_data))
+    }
+    
+    /// Creates a new `Crx3Builder` from a private key and a reader.
+    ///
+    /// This reads from the provided reader to get the ZIP content.
+    /// Useful when working with network streams or other sources that implement `Read`.
+    ///
+    /// # Arguments
+    ///
+    /// * `private_key` - The RSA private key used for signing
+    /// * `reader` - Any type that implements `Read`
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a new `Crx3Builder` instance or an error
+    pub fn from_reader<R: Read>(private_key: RsaPrivateKey, mut reader: R) -> Result<Self> {
+        let mut zip_data = Vec::new();
+        reader.read_to_end(&mut zip_data)?;
         Ok(Self::new(private_key, zip_data))
     }
 
@@ -289,10 +324,54 @@ impl Crx3Builder {
 }
 
 impl Crx3File {
+    /// Creates a `Crx3File` from a file path.
+    ///
+    /// This opens the file at the specified path and parses it as a CRX3 file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path to the CRX3 file
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the parsed `Crx3File` or an error
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut file = fs::File::open(path)?;
+        let data = fs::read(path)?;
+        Self::from_bytes(&data)
+    }
+    
+    /// Creates a `Crx3File` from a byte slice.
+    ///
+    /// This parses the provided bytes as a CRX3 file. Useful for in-memory processing
+    /// or when working with web servers where file I/O isn't used.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The CRX3 file as a byte slice
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the parsed `Crx3File` or an error
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        let mut cursor = std::io::Cursor::new(data);
+        Self::from_reader(&mut cursor)
+    }
+    
+    /// Creates a `Crx3File` from a reader.
+    ///
+    /// This reads from the provided reader and parses the data as a CRX3 file.
+    /// Useful when working with network streams or other sources that implement `Read`.
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - Any type that implements `Read`
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the parsed `Crx3File` or an error
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
         let mut magic = [0u8; 4];
-        file.read_exact(&mut magic)?;
+        reader.read_exact(&mut magic)?;
 
         if magic != *CRX3_MAGIC {
             return Err(Error::InvalidFormat(
@@ -301,7 +380,7 @@ impl Crx3File {
         }
 
         let mut version = [0u8; 4];
-        file.read_exact(&mut version)?;
+        reader.read_exact(&mut version)?;
         let version = u32::from_le_bytes(version);
 
         if version != CRX3_VERSION {
@@ -312,16 +391,16 @@ impl Crx3File {
         }
 
         let mut header_size = [0u8; 4];
-        file.read_exact(&mut header_size)?;
+        reader.read_exact(&mut header_size)?;
         let header_size = u32::from_le_bytes(header_size);
 
         let mut header_data = vec![0u8; header_size as usize];
-        file.read_exact(&mut header_data)?;
+        reader.read_exact(&mut header_data)?;
 
         let header = CrxFileHeader::decode(&header_data[..])?;
 
         let mut zip_data = Vec::new();
-        file.read_to_end(&mut zip_data)?;
+        reader.read_to_end(&mut zip_data)?;
 
         Ok(Self { header, zip_data })
     }
@@ -385,32 +464,91 @@ impl Crx3File {
         Err(Error::SignatureVerification)
     }
 
+    /// Writes the CRX3 file to a file path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path where the CRX3 file will be written
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or an error
     pub fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let mut file = fs::File::create(path)?;
-
+        let data = self.to_bytes()?;
+        fs::write(path, data)?;
+        Ok(())
+    }
+    
+    /// Converts the CRX3 file to a byte vector.
+    ///
+    /// This serializes the CRX3 file to a `Vec<u8>` for in-memory processing
+    /// or sending over a network.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the serialized CRX3 file as bytes or an error
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut data = Vec::new();
+        self.write_to(&mut data)?;
+        Ok(data)
+    }
+    
+    /// Writes the CRX3 file to a writer.
+    ///
+    /// This serializes the CRX3 file and writes it to any type that implements `Write`.
+    /// Useful when working with network streams or other destinations that implement `Write`.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - Any type that implements `Write`
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or an error
+    pub fn write_to<W: Write>(&self, mut writer: W) -> Result<()> {
         // Write magic number
-        file.write_all(CRX3_MAGIC)?;
+        writer.write_all(CRX3_MAGIC)?;
 
         // Write version
-        file.write_all(&CRX3_VERSION.to_le_bytes())?;
+        writer.write_all(&CRX3_VERSION.to_le_bytes())?;
 
         // Encode header
         let mut header_data = Vec::new();
         self.header.encode(&mut header_data)?;
 
         // Write header size and data
-        file.write_all(&(header_data.len() as u32).to_le_bytes())?;
-        file.write_all(&header_data)?;
+        writer.write_all(&(header_data.len() as u32).to_le_bytes())?;
+        writer.write_all(&header_data)?;
 
         // Write ZIP data
-        file.write_all(&self.zip_data)?;
+        writer.write_all(&self.zip_data)?;
 
         Ok(())
     }
 
+    /// Extracts the ZIP content to a file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path where the ZIP content will be written
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or an error
     pub fn extract_zip<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         fs::write(path, &self.zip_data)?;
         Ok(())
+    }
+    
+    /// Gets the ZIP content as a byte slice.
+    ///
+    /// This provides direct access to the ZIP content for in-memory processing.
+    ///
+    /// # Returns
+    ///
+    /// A byte slice containing the ZIP content
+    pub fn get_zip_content(&self) -> &[u8] {
+        &self.zip_data
     }
 
     pub fn get_crx_id(&self) -> Result<Vec<u8>> {
@@ -722,5 +860,58 @@ mod tests {
         let appid = format_extension_id(&crx_id);
 
         assert_eq!(appid, "cdofnkkjddjieacnedgfcbndilidfihj");
+    }
+    
+    #[test]
+    fn test_in_memory_processing() {
+        // Generate a test key
+        let private_key = generate_test_key();
+        
+        // Create a test ZIP
+        let zip_data = create_test_zip();
+        
+        // Build a CRX file
+        let builder = Crx3Builder::new(private_key, zip_data.clone());
+        let crx = builder.build().unwrap();
+        
+        // Convert to bytes
+        let crx_bytes = crx.to_bytes().unwrap();
+        
+        // Read it back from bytes
+        let loaded_crx = Crx3File::from_bytes(&crx_bytes).unwrap();
+        
+        // Verify it
+        assert!(loaded_crx.verify().is_ok());
+        
+        // Check ZIP content
+        assert_eq!(loaded_crx.get_zip_content(), zip_data.as_slice());
+    }
+    
+    #[test]
+    fn test_reader_writer() {
+        // Generate a test key
+        let private_key = generate_test_key();
+        
+        // Create a test ZIP in a cursor
+        let zip_data = create_test_zip();
+        let mut zip_cursor = std::io::Cursor::new(zip_data.clone());
+        
+        // Build a CRX file from reader
+        let builder = Crx3Builder::from_reader(private_key, &mut zip_cursor).unwrap();
+        let crx = builder.build().unwrap();
+        
+        // Write to a buffer
+        let mut buffer = Vec::new();
+        crx.write_to(&mut buffer).unwrap();
+        
+        // Read it back from the buffer
+        let mut read_cursor = std::io::Cursor::new(buffer);
+        let loaded_crx = Crx3File::from_reader(&mut read_cursor).unwrap();
+        
+        // Verify it
+        assert!(loaded_crx.verify().is_ok());
+        
+        // Check ZIP content
+        assert_eq!(loaded_crx.get_zip_content(), zip_data.as_slice());
     }
 }
