@@ -3,7 +3,7 @@ mod crx_file {
     include!(concat!(env!("OUT_DIR"), "/crx_file.rs"));
 }
 
-pub use crx_file::*;
+use crx_file::*;
 
 use prost::Message;
 use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
