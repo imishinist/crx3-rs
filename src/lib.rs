@@ -230,15 +230,43 @@ impl Crx3File {
 // Helper functions
 
 fn get_crx_id(public_key_data: &[u8]) -> io::Result<Vec<u8>> {
-    // In CRX3, the CRX ID is the first 16 bytes of the SHA-256 hash of the public key
+    // In Chrome extensions, the extension ID is derived from the SHA-256 hash of the
+    // SubjectPublicKeyInfo representation of the public key
     use rsa::sha2::{Digest, Sha256};
 
+    // The public_key_data is already in DER encoded SPKI format (SubjectPublicKeyInfo)
+    // which is what Chrome uses to calculate the extension ID
     let mut hasher = Sha256::new();
     hasher.update(public_key_data);
     let hash = hasher.finalize();
 
     // Take first 16 bytes
     Ok(hash[..16].to_vec())
+}
+
+// Formats a raw extension ID (16 bytes) to the Chrome extension ID format
+pub fn format_extension_id(raw_id: &[u8]) -> String {
+    // Chrome uses base26 (a-z) encoding with an offset of 10 (0->a, 9->j, 15->p)
+    // Reference: golang implementation of Chrome extension ID format
+
+    // First convert each byte to 2 hex characters
+    let hex_string = raw_id
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+
+    // Then convert each hex character to the Chrome extension ID format
+    hex_string
+        .chars()
+        .map(|c| {
+            // Parse the hex character into a number (0-15)
+            let n = c.to_digit(16).unwrap_or(0);
+
+            // Convert to a base26 character with offset 10 (a-p range for 0-15)
+            let char_code = (n + 10) as u8 + b'a' - 10;
+            char_code as char
+        })
+        .collect()
 }
 
 fn sign_data(private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>> {
@@ -349,5 +377,39 @@ mod tests {
 
         // Make sure it's the correct length (16 bytes)
         assert_eq!(crx_id.len(), 16);
+    }
+
+    #[test]
+    fn test_extension_id_format() {
+        // Test with a known byte array
+        let test_bytes = [
+            0x0a, 0x1b, 0x2c, 0x3d, 0x4e, 0x5f, 0x60, 0x71, 0x82, 0x93, 0xa4, 0xb5, 0xc6, 0xd7,
+            0xe8, 0xf9,
+        ];
+
+        // Format as Chrome extension ID
+        let extension_id = format_extension_id(&test_bytes);
+
+        // The extension ID should be 32 characters long (each byte becomes 2 characters)
+        assert_eq!(extension_id.len(), 32);
+
+        // Expected result: each byte produces 2 hex chars, then each is mapped to a-p
+        // 0->a, 1->b, ..., 9->j, a->k, b->l, ... f->p
+        let expected = "akblcmdneofpgahbicjdkelfmgnhoipj";
+        assert_eq!(extension_id, expected);
+
+        // Verify all characters are in a-p range (base16 + offset 10 -> a-p)
+        for c in extension_id.chars() {
+            assert!(c >= 'a' && c <= 'p');
+        }
+    }
+
+    #[test]
+    fn test_extension_id_format_file() {
+        let crx = Crx3File::from_file("testdata/chrome-extension.crx").unwrap();
+        let crx_id = crx.get_crx_id().unwrap();
+        let appid = format_extension_id(&crx_id);
+
+        assert_eq!(appid, "cdofnkkjddjieacnedgfcbndilidfihj");
     }
 }

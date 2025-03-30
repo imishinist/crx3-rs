@@ -66,13 +66,11 @@ fn verify_crx(crx_path: &str) -> io::Result<()> {
 
             // Get CRX ID (extension ID)
             let crx_id = crx.get_crx_id()?;
-            let crx_id_hex = crx_id
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<Vec<String>>()
-                .join("");
 
-            println!("CRX ID: {}", crx_id_hex);
+            // Format using Chrome's extension ID format (a-p character encoding)
+            let chrome_app_id = crx3_rs::format_extension_id(&crx_id);
+
+            println!("Chrome Extension ID: {}", chrome_app_id);
             Ok(())
         }
         false => {
@@ -98,11 +96,28 @@ fn extract_crx(crx_path: &str, output_path: &str) -> io::Result<()> {
     Ok(())
 }
 
+fn get_crx_id(crx_path: &str) -> io::Result<()> {
+    // Load CRX file
+    let crx = Crx3File::from_file(crx_path)?;
+
+    // Get CRX ID (extension ID)
+    let crx_id = crx.get_crx_id()?;
+
+    // Format using Chrome's extension ID format (a-p character encoding)
+    let chrome_app_id = crx3_rs::format_extension_id(&crx_id);
+
+    // Print Chrome-style extension ID (this is what appears in Chrome URLs)
+    println!("{}", chrome_app_id);
+
+    Ok(())
+}
+
 fn print_usage() {
     println!("Usage:");
     println!("  crx3-rs create <zip_path> <private_key_path> <output_crx_path>");
     println!("  crx3-rs verify <crx_path>");
     println!("  crx3-rs extract <crx_path> <output_zip_path>");
+    println!("  crx3-rs id <crx_path>");
 }
 
 fn main() -> io::Result<()> {
@@ -137,6 +152,14 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
             extract_crx(&args[2], &args[3])
+        }
+        "id" => {
+            if args.len() != 3 {
+                println!("Error: 'id' requires 1 argument");
+                print_usage();
+                return Ok(());
+            }
+            get_crx_id(&args[2])
         }
         _ => {
             println!("Unknown command: {}", args[1]);
