@@ -85,7 +85,7 @@ openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:204
 
 ## License
 
-MIT
+This project is licensed under the [MIT License](LICENSE) - see the LICENSE file for details.
 
 ## References
 
