@@ -118,10 +118,10 @@ fn get_crx_id(crx_path: &str) -> io::Result<()> {
 
 fn print_usage() {
     println!("Usage:");
-    println!("  crx3-rs create <zip_path> <private_key_path> <output_crx_path>");
-    println!("  crx3-rs verify <crx_path>");
-    println!("  crx3-rs extract <crx_path> <output_zip_path>");
-    println!("  crx3-rs id <crx_path>");
+    println!("  crx3rs create <zip_path> <private_key_path> <output_crx_path>");
+    println!("  crx3rs verify <crx_path>");
+    println!("  crx3rs extract <crx_path> <output_zip_path>");
+    println!("  crx3rs id <crx_path>");
 }
 
 fn main() -> io::Result<()> {
