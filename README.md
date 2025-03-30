@@ -15,11 +15,25 @@ A Rust library and command-line tool for handling Chrome extension CRX3 format.
 
 ## Installation
 
+### From source
+
 ```
 cargo install crx3-rs
 ```
 
-Or clone the repository and build:
+### Using cargo-binstall (Faster)
+
+For a faster installation without compilation, you can use cargo-binstall:
+
+```
+# Install cargo-binstall (if you don't have it)
+cargo install cargo-binstall
+
+# Install crx3-rs
+cargo binstall crx3-rs
+```
+
+### From repository
 
 ```
 git clone https://github.com/imishinist/crx3-rs.git

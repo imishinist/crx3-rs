@@ -1,0 +1,442 @@
+name: Binary Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (without v prefix)"
+        required: true
+        type: string
+
+jobs:
+  create-release:
+    name: Create release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Get version
+        id: get_version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for existing release
+        id: check_release
+        uses: actions/github-script@v6
+        with:
+          script: |
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: `v${process.env.VERSION}`
+              });
+              console.log(`Release exists with ID: ${release.data.id}`);
+              return release.data.id;
+            } catch (error) {
+              console.log('Release does not exist, will create a new one');
+              return '';
+            }
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+
+      - name: Create release
+        id: create_release
+        if: steps.check_release.outputs.result == ''
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          release_name: v${{ steps.get_version.outputs.version }}
+          draft: false
+          prerelease: false
+
+      - name: Get existing release URL
+        id: get_release_url
+        if: steps.check_release.outputs.result != ''
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const release = await github.rest.repos.getRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ steps.check_release.outputs.result }}
+            });
+            return release.data.upload_url;
+
+      - name: Set upload URL
+        id: set_upload_url
+        run: |
+          if [[ -n "${{ steps.create_release.outputs.upload_url }}" ]]; then
+            echo "upload_url=${{ steps.create_release.outputs.upload_url }}" >> $GITHUB_OUTPUT
+          else
+            echo "upload_url=${{ steps.get_release_url.outputs.result }}" >> $GITHUB_OUTPUT
+          fi
+
+  build-release:
+    name: Build ${{ matrix.target }}
+    needs: [create-release]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+            
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+            
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+            
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+            
+          - target: armv7-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            cross: true
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+            
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            
+          - target: i686-pc-windows-msvc
+            os: windows-latest
+            cross: false
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          version: '3.x'
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: Install cross (if needed)
+        if: matrix.cross
+        run: cargo install cross
+
+      - name: Build binary
+        run: |
+          if [[ "${{ matrix.cross }}" == "true" ]]; then
+            cross build --release --locked --target ${{ matrix.target }}
+          else
+            cargo build --release --locked --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Prepare artifacts [Windows]
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ../../../crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip crx3rs.exe
+          cd -
+        shell: bash
+
+      - name: Prepare artifacts [Unix-like]
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czvf ../../../crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz crx3rs
+          cd -
+        shell: bash
+
+      - name: Check if asset exists [Windows]
+        if: matrix.os == 'windows-latest'
+        id: check_windows_asset
+        uses: actions/github-script@v6
+        env:
+          ASSET_NAME: crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip
+        with:
+          script: |
+            const fs = require('fs');
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: `v${{ needs.create-release.outputs.version }}`
+              });
+              
+              const existingAsset = release.assets.find(asset => asset.name === process.env.ASSET_NAME);
+              if (existingAsset) {
+                console.log(`Deleting existing asset: ${existingAsset.name}`);
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: existingAsset.id
+                });
+              }
+            } catch (error) {
+              console.log('Error checking for existing asset:', error.message);
+            }
+            return '';
+
+      - name: Check if asset exists [Unix-like]
+        if: matrix.os != 'windows-latest'
+        id: check_unix_asset
+        uses: actions/github-script@v6
+        env:
+          ASSET_NAME: crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
+        with:
+          script: |
+            const fs = require('fs');
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: `v${{ needs.create-release.outputs.version }}`
+              });
+              
+              const existingAsset = release.assets.find(asset => asset.name === process.env.ASSET_NAME);
+              if (existingAsset) {
+                console.log(`Deleting existing asset: ${existingAsset.name}`);
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: existingAsset.id
+                });
+              }
+            } catch (error) {
+              console.log('Error checking for existing asset:', error.message);
+            }
+            return '';
+
+      - name: Upload release asset [Windows]
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip
+          asset_name: crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip
+          asset_content_type: application/zip
+
+      - name: Upload release asset [Unix-like]
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
+          asset_name: crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
+          asset_content_type: application/gzip
+
+  generate-checksum:
+    name: Generate checksums
+    needs: [create-release, build-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all release assets
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const releaseTag = 'v${{ needs.create-release.outputs.version }}';
+            
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: releaseTag,
+            });
+            
+            // Delete existing SHA256SUMS if it exists
+            const shaAsset = release.assets.find(asset => asset.name === 'SHA256SUMS');
+            if (shaAsset) {
+              console.log('Deleting existing SHA256SUMS');
+              await github.rest.repos.deleteReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: shaAsset.id
+              });
+            }
+            
+            for (const asset of release.assets) {
+              if (asset.name === 'SHA256SUMS') continue;
+              
+              const assetName = asset.name;
+              console.log(`Downloading ${assetName}...`);
+              
+              const { data } = await github.rest.repos.getReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: asset.id,
+                headers: {
+                  accept: 'application/octet-stream',
+                },
+              });
+              
+              fs.writeFileSync(assetName, Buffer.from(data));
+              console.log(`Downloaded ${assetName}`);
+            }
+
+      - name: Generate checksums
+        run: |
+          echo "Generating checksums..."
+          sha256sum crx3rs-* > SHA256SUMS
+          echo "SHA256SUMS file:"
+          cat SHA256SUMS
+          
+      - name: Upload checksums
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./SHA256SUMS
+          asset_name: SHA256SUMS
+          asset_content_type: text/plain
+
+  update-binstall-index:
+    name: Update binstall index
+    needs: [create-release, build-release, generate-checksum]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout gh-pages branch if it exists
+        id: checkout_pages
+        continue-on-error: true
+        uses: actions/checkout@v3
+        with:
+          ref: gh-pages
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: gh-pages
+
+      - name: Create gh-pages branch if it doesn't exist
+        if: steps.checkout_pages.outcome == 'failure'
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: repo
+
+      - name: Setup gh-pages if it doesn't exist
+        if: steps.checkout_pages.outcome == 'failure'
+        run: |
+          cd repo
+          git checkout --orphan gh-pages
+          git rm -rf .
+          touch .gitkeep
+          git add .gitkeep
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git commit -m "Initial gh-pages branch"
+          git push origin gh-pages
+          cd ..
+          rm -rf repo
+          git clone --branch gh-pages https://github.com/${{ github.repository }}.git gh-pages
+
+      - name: Update binstall index
+        run: |
+          cd gh-pages
+          
+          # Create binstall directory structure
+          mkdir -p crx3-rs-bin/
+          mkdir -p crx3-rs-bin/v${{ needs.create-release.outputs.version }}
+          
+          # Check if index.json exists, create it if it doesn't
+          if [ ! -f crx3-rs-bin/index.json ]; then
+            echo '{"name": "crx3-rs", "versions": []}' > crx3-rs-bin/index.json
+          fi
+          
+          # Update index.json with the new version if it's not already there
+          VERSION="${{ needs.create-release.outputs.version }}"
+          jq --arg version "$VERSION" '.versions = (.versions | if index($version) then . else . + [$version] end) | .versions = (.versions | sort_by(.) | reverse)' \
+            crx3-rs-bin/index.json > temp_index.json && mv temp_index.json crx3-rs-bin/index.json
+          
+          # Generate metadata for this version
+          cat > crx3-rs-bin/v${{ needs.create-release.outputs.version }}/crx3-rs.json << 'EOL'
+          {
+            "name": "crx3-rs",
+            "version": "${{ needs.create-release.outputs.version }}",
+            "description": "Chrome extension CRX3 format parser and builder in Rust",
+            "license": "MIT",
+            "homepage": "https://github.com/${{ github.repository }}",
+            "repository": "https://github.com/${{ github.repository }}",
+            "targets": {
+              "x86_64-unknown-linux-gnu": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v${{ needs.create-release.outputs.version }}/crx3rs-${{ needs.create-release.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz",
+                "signature": ""
+              },
+              "x86_64-unknown-linux-musl": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v${{ needs.create-release.outputs.version }}/crx3rs-${{ needs.create-release.outputs.version }}-x86_64-unknown-linux-musl.tar.gz",
+                "signature": ""
+              },
+              "aarch64-unknown-linux-gnu": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v${{ needs.create-release.outputs.version }}/crx3rs-${{ needs.create-release.outputs.version }}-aarch64-unknown-linux-gnu.tar.gz",
+                "signature": ""
+              },
+              "aarch64-unknown-linux-musl": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v${{ needs.create-release.outputs.version }}/crx3rs-${{ needs.create-release.outputs.version }}-aarch64-unknown-linux-musl.tar.gz",
+                "signature": ""
+              },
+              "armv7-unknown-linux-gnueabihf": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v${{ needs.create-release.outputs.version }}/crx3rs-${{ needs.create-release.outputs.version }}-armv7-unknown-linux-gnueabihf.tar.gz",
+                "signature": ""
+              },
+              "x86_64-apple-darwin": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v${{ needs.create-release.outputs.version }}/crx3rs-${{ needs.create-release.outputs.version }}-x86_64-apple-darwin.tar.gz",
+                "signature": ""
+              },
+              "aarch64-apple-darwin": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v${{ needs.create-release.outputs.version }}/crx3rs-${{ needs.create-release.outputs.version }}-aarch64-apple-darwin.tar.gz",
+                "signature": ""
+              },
+              "x86_64-pc-windows-msvc": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v${{ needs.create-release.outputs.version }}/crx3rs-${{ needs.create-release.outputs.version }}-x86_64-pc-windows-msvc.zip",
+                "signature": ""
+              },
+              "i686-pc-windows-msvc": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v${{ needs.create-release.outputs.version }}/crx3rs-${{ needs.create-release.outputs.version }}-i686-pc-windows-msvc.zip",
+                "signature": ""
+              }
+            },
+            "bin": {
+              "crx3rs": {
+                "name": "crx3rs",
+                "path": "crx3rs"
+              }
+            }
+          }
+          EOL
+          
+          # Commit and push changes
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add crx3-rs-bin/
+          
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update binstall index for v${{ needs.create-release.outputs.version }}"
+            git push
+          fi
