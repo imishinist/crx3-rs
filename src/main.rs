@@ -60,27 +60,31 @@ fn verify_crx(crx_path: &str) -> io::Result<()> {
     let crx = Crx3File::from_file(crx_path)?;
 
     // Verify signature
-    match crx.verify()? {
-        true => {
+    match crx.verify() {
+        Ok(_) => {
             println!("Signature verification: SUCCESS");
 
-            // Get CRX ID (extension ID)
-            let crx_id = crx.get_crx_id()?;
-
-            // Format using Chrome's extension ID format (a-p character encoding)
-            let chrome_app_id = crx3_rs::format_extension_id(&crx_id);
-
-            println!("Chrome Extension ID: {}", chrome_app_id);
-            Ok(())
+            // Also get the extension ID
+            match crx.get_crx_id() {
+                Ok(crx_id) => {
+                    // Format using Chrome's extension ID format (a-p character encoding)
+                    let chrome_app_id = crx3_rs::format_extension_id(&crx_id);
+                    println!("Chrome Extension ID: {}", chrome_app_id);
+                }
+                Err(e) => {
+                    eprintln!("Could not read extension ID: {}", e);
+                }
+            }
         }
-        false => {
+        Err(e) => {
             println!("Signature verification: FAILED");
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Signature verification failed",
-            ))
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Signature verification failed: {}", e),
+            ));
         }
     }
+    Ok(())
 }
 
 fn extract_crx(crx_path: &str, output_path: &str) -> io::Result<()> {
