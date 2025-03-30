@@ -7,7 +7,6 @@ pub use crx_file::*;
 
 use prost::Message;
 use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
-use rsa::signature::SignatureEncoding;
 use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
 use std::fs;
 use std::io::{self, Read, Write};
@@ -286,33 +285,63 @@ pub fn format_extension_id(raw_id: &[u8]) -> String {
         .collect()
 }
 
-fn sign_data(private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>> {
-    // For simplicity, using PSS scheme directly
-    use rsa::pss::SigningKey;
-    use rsa::sha2::Sha256;
-    use rsa::signature::RandomizedSigner;
-
-    let signing_key = SigningKey::<Sha256>::new(private_key.clone());
-    let signature = signing_key.sign_with_rng(&mut rand::thread_rng(), data);
-
-    Ok(signature.to_vec())
+/// Trait representing signature operations for CRX3 files
+trait SignatureOperation {
+    /// Sign the data with the private key
+    fn sign(&self, private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>>;
+    
+    /// Verify the signature with the public key
+    fn verify(&self, public_key: &RsaPublicKey, data: &[u8], signature: &[u8]) -> io::Result<()>;
 }
 
-// Verify using multiple signature schemes
+/// Pkcs1v15 signature scheme implementation
+struct Pkcs1v15Signature;
+
+impl SignatureOperation for Pkcs1v15Signature {
+    fn sign(&self, private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>> {
+        use rsa::sha2::{Digest, Sha256};
+        
+        // Calculate the SHA-256 hash of the data
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let hash = hasher.finalize();
+        
+        // Sign with PKCS#1 v1.5
+        let signature = private_key
+            .sign(Pkcs1v15Sign::new::<Sha256>(), &hash)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Signing failed: {}", e)))?;
+            
+        Ok(signature.to_vec())
+    }
+    
+    fn verify(&self, public_key: &RsaPublicKey, data: &[u8], signature: &[u8]) -> io::Result<()> {
+        use rsa::sha2::{Digest, Sha256};
+        
+        // Calculate the SHA-256 hash of the data
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let hash = hasher.finalize();
+        
+        // Verify with PKCS#1 v1.5
+        public_key
+            .verify(Pkcs1v15Sign::new::<Sha256>(), &hash, signature)
+            .map_err(|_e| io::Error::new(io::ErrorKind::InvalidData, "Signature verification failed"))
+    }
+}
+
+// Use PKCS#1 v1.5 scheme for Chrome Extension signing
+static SIGNATURE_SCHEME: Pkcs1v15Signature = Pkcs1v15Signature {};
+
+fn sign_data(private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>> {
+    SIGNATURE_SCHEME.sign(private_key, data)
+}
+
 fn verify_signature(
     public_key: &RsaPublicKey,
     signed_data: &[u8],
     signature: &[u8],
 ) -> io::Result<()> {
-    // Calculate the SHA-256 hash of the data for logging
-    use rsa::sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(signed_data);
-    let hash = hasher.finalize();
-
-    public_key
-        .verify(Pkcs1v15Sign::new::<Sha256>(), &hash, signature)
-        .map_err(|_e| io::Error::new(io::ErrorKind::InvalidData, "Signature verification failed"))
+    SIGNATURE_SCHEME.verify(public_key, signed_data, signature)
 }
 
 #[cfg(test)]
@@ -361,9 +390,8 @@ mod tests {
         // Read it back
         let loaded_crx = Crx3File::from_file(&crx_path).unwrap();
 
-        // Verify it
-        // TODO: fix sign implementation
-        // assert!(loaded_crx.verify().is_ok());
+        // Verify it - now fixed with consistent signature algorithm
+        assert!(loaded_crx.verify().is_ok());
 
         // Extract ZIP and verify it matches the original
         let zip_path = tmp_dir.join("test.zip");
