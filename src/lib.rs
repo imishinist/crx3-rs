@@ -14,34 +14,82 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-/// Error types for CRX3 operations
+/// Error types for CRX3 operations.
+///
+/// This enum represents all possible errors that can occur when working with
+/// Chrome Extension (CRX3) files, including both internal errors and errors
+/// from external dependencies.
 #[derive(Debug)]
 pub enum Error {
-    /// I/O error
+    /// I/O error from the standard library.
+    ///
+    /// Occurs during file operations like reading, writing, or seeking.
     Io(io::Error),
-    /// Protobuf encoding/decoding error
+
+    /// Error during protobuf message encoding.
+    ///
+    /// Occurs when the library attempts to encode a protobuf message
+    /// (e.g., during CRX file creation).
     Protobuf(prost::EncodeError),
-    /// Protobuf encoding/decoding error
+
+    /// Error during protobuf message decoding.
+    ///
+    /// Occurs when the library attempts to decode a protobuf message
+    /// (e.g., when reading a CRX header).
     ProtobufDecode(prost::DecodeError),
-    /// RSA operation error
+
+    /// Error during RSA cryptographic operations.
+    ///
+    /// Wraps the underlying RSA library's error and preserves error context.
+    /// May occur during signing or verification operations.
     Rsa(rsa::Error),
-    /// PKCS8 encoding/decoding error
+
+    /// Error related to PKCS#8 encoding or decoding.
+    ///
+    /// Occurs when handling PKCS#8 formatted keys.
     Pkcs8(rsa::pkcs8::Error),
-    /// PKCS8 SPKI error
+
+    /// Error related to SubjectPublicKeyInfo (SPKI) operations.
+    ///
+    /// Occurs when working with public key data in SPKI format.
     Spki(rsa::pkcs8::spki::Error),
-    /// Invalid CRX file format
+
+    /// Invalid CRX file format.
+    ///
+    /// Occurs when a file doesn't conform to the CRX3 format specification.
+    /// The string provides details about the specific format violation.
     InvalidFormat(String),
-    /// Signature verification failed
+
+    /// Signature verification failed.
+    ///
+    /// Occurs when the CRX file signature doesn't match the expected value.
     SignatureVerification,
-    /// Multiple RSA signatures not supported
+
+    /// Multiple RSA signatures are not supported.
+    ///
+    /// Occurs when a CRX file contains more than one RSA signature.
     MultipleSignatures,
-    /// No RSA signature found
+
+    /// No RSA signature found.
+    ///
+    /// Occurs when attempting to verify a CRX file that doesn't contain any RSA signatures.
     NoSignature,
-    /// ECDSA signatures not supported
+
+    /// ECDSA signatures are not supported by this library.
+    ///
+    /// Occurs when a CRX file contains ECDSA signatures, which this library
+    /// doesn't currently support.
     EcdsaNotSupported,
-    /// No signed header data found
+
+    /// No signed header data found.
+    ///
+    /// Occurs when a CRX file lacks the required signed header data.
     NoSignedHeader,
-    /// No CRX ID found
+
+    /// No CRX ID found.
+    ///
+    /// Occurs when attempting to extract an extension ID from a CRX file
+    /// that doesn't contain one.
     NoCrxId,
 }
 
@@ -124,17 +172,66 @@ impl From<Error> for io::Error {
     }
 }
 
-/// Result type for CRX3 operations
+/// Result type for CRX3 operations.
+///
+/// This is a convenience type alias for `std::result::Result` with the error type
+/// fixed to [`Error`]. It's used throughout this library for all operations that
+/// might fail.
 pub type Result<T> = std::result::Result<T, Error>;
 
 const CRX3_MAGIC: &[u8; 4] = b"Cr24";
 const CRX3_VERSION: u32 = 3;
 
+/// Builder for creating CRX3 files.
+///
+/// This struct provides a fluent interface for creating Chrome Extension (CRX3) files
+/// from a ZIP archive and RSA private key.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use crx3_rs::{Crx3Builder, Result};
+/// # use rsa::RsaPrivateKey;
+/// # fn example() -> Result<()> {
+/// # let private_key = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
+/// // Create a CRX file from a ZIP file and private key
+/// let crx = Crx3Builder::from_zip_path(private_key, "extension.zip")?
+///     .build()?;
+///
+/// // Write the CRX file to disk
+/// crx.write_to_file("extension.crx")?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct Crx3Builder {
     private_key: RsaPrivateKey,
     zip_data: Vec<u8>,
 }
 
+/// Represents a Chrome Extension (CRX3) file.
+///
+/// This struct provides methods for working with CRX3 files, including verification,
+/// writing to disk, and extracting the ZIP contents.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use crx3_rs::{Crx3File, Result};
+/// # fn example() -> Result<()> {
+/// // Read a CRX file from disk
+/// let crx = Crx3File::from_file("extension.crx")?;
+///
+/// // Verify the signature
+/// crx.verify()?;
+///
+/// // Extract the extension ID
+/// let crx_id = crx.get_crx_id()?;
+///
+/// // Extract the ZIP contents
+/// crx.extract_zip("extension.zip")?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct Crx3File {
     header: CrxFileHeader,
     zip_data: Vec<u8>,
@@ -346,7 +443,31 @@ fn get_crx_id(public_key_data: &[u8]) -> Result<Vec<u8>> {
     Ok(hash[..16].to_vec())
 }
 
-// Formats a raw extension ID (16 bytes) to the Chrome extension ID format
+/// Formats a raw extension ID (16 bytes) to the Chrome extension ID format.
+///
+/// Chrome extension IDs are displayed as 32-character lowercase strings using
+/// characters a-p (representing 16 bytes encoded as base16 with an offset).
+///
+/// # Arguments
+///
+/// * `raw_id` - The raw binary extension ID (typically 16 bytes obtained from `get_crx_id`)
+///
+/// # Returns
+///
+/// A String containing the formatted extension ID in Chrome's standard format.
+///
+/// # Examples
+///
+/// ```
+/// # use crx3_rs::{Crx3File, format_extension_id, Result};
+/// # fn example() -> Result<()> {
+/// # let crx = Crx3File::from_file("testdata/chrome-extension.crx")?;
+/// let raw_id = crx.get_crx_id()?;
+/// let extension_id = format_extension_id(&raw_id);
+/// // Result will be a string like "cdofnkkjddjieacnedgfcbndilidfihj"
+/// # Ok(())
+/// # }
+/// ```
 pub fn format_extension_id(raw_id: &[u8]) -> String {
     // Chrome uses base26 (a-z) encoding with an offset of 10 (0->a, 9->j, 15->p)
     // Reference: golang implementation of Chrome extension ID format
