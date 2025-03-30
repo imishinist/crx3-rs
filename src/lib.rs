@@ -56,12 +56,8 @@ impl Crx3Builder {
         let mut signed_header_data = Vec::new();
         signed_data.encode(&mut signed_header_data)?;
 
-        // Prepare data to sign
-        let signed_header_size = signed_header_data.len() as u32;
-        let mut data_to_sign = b"CRX3 SignedData\x00".to_vec();
-        data_to_sign.extend_from_slice(&signed_header_size.to_le_bytes());
-        data_to_sign.extend_from_slice(&signed_header_data);
-        data_to_sign.extend_from_slice(&self.zip_data);
+        // Prepare data to sign using the common function
+        let data_to_sign = prepare_signed_data(&signed_header_data, &self.zip_data);
 
         // Create signature
         let signature = sign_data(&self.private_key, &data_to_sign)?;
@@ -156,12 +152,8 @@ impl Crx3File {
             }
         };
 
-        // Recreate data that was signed
-        let signed_header_size = signed_header_data.len() as u32;
-        let mut data_to_verify = b"CRX3 SignedData\x00".to_vec();
-        data_to_verify.extend_from_slice(&signed_header_size.to_le_bytes());
-        data_to_verify.extend_from_slice(signed_header_data);
-        data_to_verify.extend_from_slice(&self.zip_data);
+        // Prepare data for verification using the common function
+        let data_to_verify = prepare_signed_data(signed_header_data, &self.zip_data);
 
         // Try to verify with each RSA signature
         for proof in self.header.sha256_with_rsa.iter() {
@@ -285,19 +277,53 @@ pub fn format_extension_id(raw_id: &[u8]) -> String {
         .collect()
 }
 
-/// Trait representing signature operations for CRX3 files
-trait SignatureOperation {
+/// Trait representing CRX3 data preparation and signature operations
+///
+/// This trait defines the operations needed for CRX3 file signing and verification.
+/// It separates the data preparation logic from the actual cryptographic operations,
+/// making it easier to change or extend the signature scheme in the future.
+pub trait SignatureOperation {
+    /// Prepare data for signing or verification from CRX3 components
+    ///
+    /// This creates the data blob that will be signed or verified according to the
+    /// Chrome Extension format specification.
+    fn prepare_data(&self, signed_header_data: &[u8], zip_data: &[u8]) -> Vec<u8>;
+    
     /// Sign the data with the private key
+    ///
+    /// # Arguments
+    /// * `private_key` - The RSA private key used for signing
+    /// * `data` - The data to be signed
+    ///
+    /// # Returns
+    /// * `io::Result<Vec<u8>>` - The signature bytes or an error
     fn sign(&self, private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>>;
     
     /// Verify the signature with the public key
+    ///
+    /// # Arguments
+    /// * `public_key` - The RSA public key used for verification
+    /// * `data` - The data that was signed
+    /// * `signature` - The signature to verify
+    ///
+    /// # Returns
+    /// * `io::Result<()>` - Ok if verification succeeds, or an error
     fn verify(&self, public_key: &RsaPublicKey, data: &[u8], signature: &[u8]) -> io::Result<()>;
 }
 
-/// Pkcs1v15 signature scheme implementation
-struct Pkcs1v15Signature;
+/// Chrome CRX3 signature scheme implementation using PKCS#1 v1.5 with SHA-256
+struct Crx3Signature;
 
-impl SignatureOperation for Pkcs1v15Signature {
+impl SignatureOperation for Crx3Signature {
+    fn prepare_data(&self, signed_header_data: &[u8], zip_data: &[u8]) -> Vec<u8> {
+        let signed_header_size = signed_header_data.len() as u32;
+        let mut data = b"CRX3 SignedData\x00".to_vec();
+        data.extend_from_slice(&signed_header_size.to_le_bytes());
+        data.extend_from_slice(signed_header_data);
+        data.extend_from_slice(zip_data);
+        data
+    }
+    
     fn sign(&self, private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>> {
         use rsa::sha2::{Digest, Sha256};
         
@@ -329,13 +355,45 @@ impl SignatureOperation for Pkcs1v15Signature {
     }
 }
 
-// Use PKCS#1 v1.5 scheme for Chrome Extension signing
-static SIGNATURE_SCHEME: Pkcs1v15Signature = Pkcs1v15Signature {};
+// Use Chrome CRX3 signature scheme with PKCS#1 v1.5 for Chrome Extension signing
+static SIGNATURE_SCHEME: Crx3Signature = Crx3Signature {};
 
+/// Prepare data for signing or verification in the Chrome Extension format
+///
+/// Creates a blob containing the header magic, header size, header data, and ZIP content
+/// according to the Chrome Extension format specification.
+///
+/// # Arguments
+/// * `signed_header_data` - The encoded SignedData protobuf message
+/// * `zip_data` - The ZIP file content
+///
+/// # Returns
+/// The prepared data ready for signing or verification
+fn prepare_signed_data(signed_header_data: &[u8], zip_data: &[u8]) -> Vec<u8> {
+    SIGNATURE_SCHEME.prepare_data(signed_header_data, zip_data)
+}
+
+/// Sign the prepared data with a private key
+///
+/// # Arguments
+/// * `private_key` - The RSA private key to sign with
+/// * `data` - The data to sign (should be prepared with prepare_signed_data)
+///
+/// # Returns
+/// * `io::Result<Vec<u8>>` - The signature or an error
 fn sign_data(private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>> {
     SIGNATURE_SCHEME.sign(private_key, data)
 }
 
+/// Verify a signature with a public key
+///
+/// # Arguments
+/// * `public_key` - The RSA public key to verify with
+/// * `signed_data` - The data that was signed (should be prepared with prepare_signed_data)
+/// * `signature` - The signature to verify
+///
+/// # Returns
+/// * `io::Result<()>` - Ok if verification succeeds, or an error
 fn verify_signature(
     public_key: &RsaPublicKey,
     signed_data: &[u8],
