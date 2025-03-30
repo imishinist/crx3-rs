@@ -1,6 +1,6 @@
 [package]
 name = "crx3-rs"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Taisuke Miyazaki <imishinist@gmail.com>"]
 edition = "2024"
 description = "Chrome extension CRX3 format parser and builder in Rust"
