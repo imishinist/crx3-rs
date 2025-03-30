@@ -8,9 +8,124 @@ pub use crx_file::*;
 use prost::Message;
 use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
 use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
+use std::error::Error as StdError;
+use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
+
+/// Error types for CRX3 operations
+#[derive(Debug)]
+pub enum Error {
+    /// I/O error
+    Io(io::Error),
+    /// Protobuf encoding/decoding error
+    Protobuf(prost::EncodeError),
+    /// Protobuf encoding/decoding error
+    ProtobufDecode(prost::DecodeError),
+    /// RSA operation error
+    Rsa(rsa::Error),
+    /// PKCS8 encoding/decoding error
+    Pkcs8(rsa::pkcs8::Error),
+    /// PKCS8 SPKI error
+    Spki(rsa::pkcs8::spki::Error),
+    /// Invalid CRX file format
+    InvalidFormat(String),
+    /// Signature verification failed
+    SignatureVerification,
+    /// Multiple RSA signatures not supported
+    MultipleSignatures,
+    /// No RSA signature found
+    NoSignature,
+    /// ECDSA signatures not supported
+    EcdsaNotSupported,
+    /// No signed header data found
+    NoSignedHeader,
+    /// No CRX ID found
+    NoCrxId,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Io(err) => write!(f, "I/O error: {}", err),
+            Error::Protobuf(err) => write!(f, "Protobuf encoding error: {}", err),
+            Error::ProtobufDecode(err) => write!(f, "Protobuf decoding error: {}", err),
+            Error::Rsa(err) => write!(f, "RSA operation error: {}", err),
+            Error::Pkcs8(err) => write!(f, "PKCS8 error: {}", err),
+            Error::Spki(err) => write!(f, "PKCS8 SPKI error: {}", err),
+            Error::InvalidFormat(msg) => write!(f, "Invalid CRX format: {}", msg),
+            Error::SignatureVerification => write!(f, "Signature verification failed"),
+            Error::MultipleSignatures => write!(f, "Multiple RSA signatures are not supported"),
+            Error::NoSignature => write!(f, "No RSA signature found"),
+            Error::EcdsaNotSupported => write!(f, "ECDSA signatures are not supported"),
+            Error::NoSignedHeader => write!(f, "No signed header data found"),
+            Error::NoCrxId => write!(f, "No CRX ID found"),
+        }
+    }
+}
+
+impl StdError for Error {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Error::Io(err) => Some(err),
+            Error::Protobuf(err) => Some(err),
+            Error::ProtobufDecode(err) => Some(err),
+            Error::Rsa(err) => Some(err),
+            Error::Pkcs8(err) => Some(err),
+            Error::Spki(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::Io(err)
+    }
+}
+
+impl From<prost::EncodeError> for Error {
+    fn from(err: prost::EncodeError) -> Self {
+        Error::Protobuf(err)
+    }
+}
+
+impl From<prost::DecodeError> for Error {
+    fn from(err: prost::DecodeError) -> Self {
+        Error::ProtobufDecode(err)
+    }
+}
+
+impl From<rsa::Error> for Error {
+    fn from(err: rsa::Error) -> Self {
+        Error::Rsa(err)
+    }
+}
+
+impl From<rsa::pkcs8::Error> for Error {
+    fn from(err: rsa::pkcs8::Error) -> Self {
+        Error::Pkcs8(err)
+    }
+}
+
+impl From<rsa::pkcs8::spki::Error> for Error {
+    fn from(err: rsa::pkcs8::spki::Error) -> Self {
+        Error::Spki(err)
+    }
+}
+
+impl From<Error> for io::Error {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::Io(io_err) => io_err,
+            _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
+        }
+    }
+}
+
+/// Result type for CRX3 operations
+pub type Result<T> = std::result::Result<T, Error>;
 
 const CRX3_MAGIC: &[u8; 4] = b"Cr24";
 const CRX3_VERSION: u32 = 3;
@@ -33,18 +148,15 @@ impl Crx3Builder {
         }
     }
 
-    pub fn from_zip_path<P: AsRef<Path>>(
-        private_key: RsaPrivateKey,
-        zip_path: P,
-    ) -> io::Result<Self> {
+    pub fn from_zip_path<P: AsRef<Path>>(private_key: RsaPrivateKey, zip_path: P) -> Result<Self> {
         let zip_data = fs::read(zip_path)?;
         Ok(Self::new(private_key, zip_data))
     }
 
-    pub fn build(self) -> io::Result<Crx3File> {
+    pub fn build(self) -> Result<Crx3File> {
         // Generate public key
         let public_key = self.private_key.to_public_key();
-        let public_key_der = public_key.to_public_key_der().unwrap();
+        let public_key_der = public_key.to_public_key_der()?;
 
         // Create signed data (CRX ID is derived from public key)
         let crx_id = get_crx_id(public_key_der.as_bytes())?;
@@ -80,15 +192,14 @@ impl Crx3Builder {
 }
 
 impl Crx3File {
-    pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut file = fs::File::open(path)?;
         let mut magic = [0u8; 4];
         file.read_exact(&mut magic)?;
 
         if magic != *CRX3_MAGIC {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Not a valid CRX3 file (invalid magic)",
+            return Err(Error::InvalidFormat(
+                "Not a valid CRX3 file (invalid magic)".into(),
             ));
         }
 
@@ -97,10 +208,10 @@ impl Crx3File {
         let version = u32::from_le_bytes(version);
 
         if version != CRX3_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unsupported CRX version: {}", version),
-            ));
+            return Err(Error::InvalidFormat(format!(
+                "Unsupported CRX version: {}",
+                version
+            )));
         }
 
         let mut header_size = [0u8; 4];
@@ -118,37 +229,25 @@ impl Crx3File {
         Ok(Self { header, zip_data })
     }
 
-    pub fn verify(&self) -> io::Result<()> {
+    pub fn verify(&self) -> Result<()> {
         // Check if there are any RSA signatures
         if self.header.sha256_with_rsa.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "No RSA signature found",
-            ));
+            return Err(Error::NoSignature);
         }
         // Check if there are multiple RSA signatures
         if self.header.sha256_with_rsa.len() > 1 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Multiple RSA signatures are not supported",
-            ));
+            return Err(Error::MultipleSignatures);
         }
         // Check if there are any ECDSA signatures (warning only)
         if !self.header.sha256_with_ecdsa.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "ECDSA signatures are not supported",
-            ));
+            return Err(Error::EcdsaNotSupported);
         }
 
         // Get the signed header data
         let signed_header_data = match &self.header.signed_header_data {
             Some(data) => data,
             None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "No signed header data found",
-                ));
+                return Err(Error::NoSignedHeader);
             }
         };
 
@@ -186,13 +285,10 @@ impl Crx3File {
         }
 
         // If we get here, no signatures verified successfully
-        Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Signature verification failed",
-        ))
+        Err(Error::SignatureVerification)
     }
 
-    pub fn write_to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+    pub fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let mut file = fs::File::create(path)?;
 
         // Write magic number
@@ -215,11 +311,12 @@ impl Crx3File {
         Ok(())
     }
 
-    pub fn extract_zip<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        fs::write(path, &self.zip_data)
+    pub fn extract_zip<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        fs::write(path, &self.zip_data)?;
+        Ok(())
     }
 
-    pub fn get_crx_id(&self) -> io::Result<Vec<u8>> {
+    pub fn get_crx_id(&self) -> Result<Vec<u8>> {
         if let Some(signed_header_data) = &self.header.signed_header_data {
             let signed_data = SignedData::decode(&signed_header_data[..])?;
 
@@ -228,16 +325,13 @@ impl Crx3File {
             }
         }
 
-        Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "No CRX ID found",
-        ))
+        Err(Error::NoCrxId)
     }
 }
 
 // Helper functions
 
-fn get_crx_id(public_key_data: &[u8]) -> io::Result<Vec<u8>> {
+fn get_crx_id(public_key_data: &[u8]) -> Result<Vec<u8>> {
     // In Chrome extensions, the extension ID is derived from the SHA-256 hash of the
     // SubjectPublicKeyInfo representation of the public key
     use rsa::sha2::{Digest, Sha256};
@@ -292,7 +386,7 @@ pub trait SignatureOperation {
     /// This creates the data blob that will be signed or verified according to the
     /// Chrome Extension format specification.
     fn prepare_data(&self, signed_header_data: &[u8], zip_data: &[u8]) -> Vec<u8>;
-    
+
     /// Sign the data with the private key
     ///
     /// # Arguments
@@ -300,9 +394,9 @@ pub trait SignatureOperation {
     /// * `data` - The data to be signed
     ///
     /// # Returns
-    /// * `io::Result<Vec<u8>>` - The signature bytes or an error
-    fn sign(&self, private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>>;
-    
+    /// * `Result<Vec<u8>>` - The signature bytes or an error
+    fn sign(&self, private_key: &RsaPrivateKey, data: &[u8]) -> Result<Vec<u8>>;
+
     /// Verify the signature with the public key
     ///
     /// # Arguments
@@ -311,8 +405,8 @@ pub trait SignatureOperation {
     /// * `signature` - The signature to verify
     ///
     /// # Returns
-    /// * `io::Result<()>` - Ok if verification succeeds, or an error
-    fn verify(&self, public_key: &RsaPublicKey, data: &[u8], signature: &[u8]) -> io::Result<()>;
+    /// * `Result<()>` - Ok if verification succeeds, or an error
+    fn verify(&self, public_key: &RsaPublicKey, data: &[u8], signature: &[u8]) -> Result<()>;
 }
 
 /// Chrome CRX3 signature scheme implementation using PKCS#1 v1.5 with SHA-256
@@ -327,35 +421,33 @@ impl SignatureOperation for Crx3Signature {
         data.extend_from_slice(zip_data);
         data
     }
-    
-    fn sign(&self, private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>> {
+
+    fn sign(&self, private_key: &RsaPrivateKey, data: &[u8]) -> Result<Vec<u8>> {
         use rsa::sha2::{Digest, Sha256};
-        
+
         // Calculate the SHA-256 hash of the data
         let mut hasher = Sha256::new();
         hasher.update(data);
         let hash = hasher.finalize();
-        
+
         // Sign with PKCS#1 v1.5
-        let signature = private_key
-            .sign(Pkcs1v15Sign::new::<Sha256>(), &hash)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Signing failed: {}", e)))?;
-            
+        let signature = private_key.sign(Pkcs1v15Sign::new::<Sha256>(), &hash)?;
+
         Ok(signature.to_vec())
     }
-    
-    fn verify(&self, public_key: &RsaPublicKey, data: &[u8], signature: &[u8]) -> io::Result<()> {
+
+    fn verify(&self, public_key: &RsaPublicKey, data: &[u8], signature: &[u8]) -> Result<()> {
         use rsa::sha2::{Digest, Sha256};
-        
+
         // Calculate the SHA-256 hash of the data
         let mut hasher = Sha256::new();
         hasher.update(data);
         let hash = hasher.finalize();
-        
+
         // Verify with PKCS#1 v1.5
         public_key
             .verify(Pkcs1v15Sign::new::<Sha256>(), &hash, signature)
-            .map_err(|_e| io::Error::new(io::ErrorKind::InvalidData, "Signature verification failed"))
+            .map_err(|_| Error::SignatureVerification)
     }
 }
 
@@ -384,8 +476,8 @@ fn prepare_signed_data(signed_header_data: &[u8], zip_data: &[u8]) -> Vec<u8> {
 /// * `data` - The data to sign (should be prepared with prepare_signed_data)
 ///
 /// # Returns
-/// * `io::Result<Vec<u8>>` - The signature or an error
-fn sign_data(private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>> {
+/// * `Result<Vec<u8>>` - The signature or an error
+fn sign_data(private_key: &RsaPrivateKey, data: &[u8]) -> Result<Vec<u8>> {
     SIGNATURE_SCHEME.sign(private_key, data)
 }
 
@@ -397,12 +489,8 @@ fn sign_data(private_key: &RsaPrivateKey, data: &[u8]) -> io::Result<Vec<u8>> {
 /// * `signature` - The signature to verify
 ///
 /// # Returns
-/// * `io::Result<()>` - Ok if verification succeeds, or an error
-fn verify_signature(
-    public_key: &RsaPublicKey,
-    signed_data: &[u8],
-    signature: &[u8],
-) -> io::Result<()> {
+/// * `Result<()>` - Ok if verification succeeds, or an error
+fn verify_signature(public_key: &RsaPublicKey, signed_data: &[u8], signature: &[u8]) -> Result<()> {
     SIGNATURE_SCHEME.verify(public_key, signed_data, signature)
 }
 
