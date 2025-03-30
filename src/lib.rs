@@ -269,7 +269,7 @@ impl Crx3Builder {
         let zip_data = fs::read(zip_path)?;
         Ok(Self::new(private_key, zip_data))
     }
-    
+
     /// Creates a new `Crx3Builder` from a private key and a reader.
     ///
     /// This reads from the provided reader to get the ZIP content.
@@ -353,7 +353,7 @@ impl Crx3File {
         let data = fs::read(path)?;
         Self::from_bytes(&data)
     }
-    
+
     /// Creates a `Crx3File` from a byte slice.
     ///
     /// This parses the provided bytes as a CRX3 file. Useful for in-memory processing
@@ -370,7 +370,7 @@ impl Crx3File {
         let mut cursor = std::io::Cursor::new(data);
         Self::from_reader(&mut cursor)
     }
-    
+
     /// Creates a `Crx3File` from a reader.
     ///
     /// This reads from the provided reader and parses the data as a CRX3 file.
@@ -502,7 +502,7 @@ impl Crx3File {
         fs::write(path, data)?;
         Ok(())
     }
-    
+
     /// Converts the CRX3 file to a byte vector.
     ///
     /// This serializes the CRX3 file to a `Vec<u8>` for in-memory processing
@@ -516,7 +516,7 @@ impl Crx3File {
         self.write_to(&mut data)?;
         Ok(data)
     }
-    
+
     /// Writes the CRX3 file to a writer.
     ///
     /// This serializes the CRX3 file and writes it to any type that implements `Write`.
@@ -563,7 +563,7 @@ impl Crx3File {
         fs::write(path, &self.zip_data)?;
         Ok(())
     }
-    
+
     /// Gets the ZIP content as a byte slice.
     ///
     /// This provides direct access to the ZIP content for in-memory processing.
@@ -934,56 +934,56 @@ mod tests {
 
         assert_eq!(appid, "cdofnkkjddjieacnedgfcbndilidfihj");
     }
-    
+
     #[test]
     fn test_in_memory_processing() {
         // Generate a test key
         let private_key = generate_test_key();
-        
+
         // Create a test ZIP
         let zip_data = create_test_zip();
-        
+
         // Build a CRX file
         let builder = Crx3Builder::new(private_key, zip_data.clone());
         let crx = builder.build().unwrap();
-        
+
         // Convert to bytes
         let crx_bytes = crx.to_bytes().unwrap();
-        
+
         // Read it back from bytes
         let loaded_crx = Crx3File::from_bytes(&crx_bytes).unwrap();
-        
+
         // Verify it
         assert!(loaded_crx.verify().is_ok());
-        
+
         // Check ZIP content
         assert_eq!(loaded_crx.get_zip_content(), zip_data.as_slice());
     }
-    
+
     #[test]
     fn test_reader_writer() {
         // Generate a test key
         let private_key = generate_test_key();
-        
+
         // Create a test ZIP in a cursor
         let zip_data = create_test_zip();
         let mut zip_cursor = std::io::Cursor::new(zip_data.clone());
-        
+
         // Build a CRX file from reader
         let builder = Crx3Builder::from_reader(private_key, &mut zip_cursor).unwrap();
         let crx = builder.build().unwrap();
-        
+
         // Write to a buffer
         let mut buffer = Vec::new();
         crx.write_to(&mut buffer).unwrap();
-        
+
         // Read it back from the buffer
         let mut read_cursor = std::io::Cursor::new(buffer);
         let loaded_crx = Crx3File::from_reader(&mut read_cursor).unwrap();
-        
+
         // Verify it
         assert!(loaded_crx.verify().is_ok());
-        
+
         // Check ZIP content
         assert_eq!(loaded_crx.get_zip_content(), zip_data.as_slice());
     }
