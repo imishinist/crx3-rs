@@ -204,7 +204,9 @@ const CRX3_VERSION: u32 = 3;
 /// # }
 /// ```
 pub struct Crx3Builder {
+    /// The RSA private key used for signing the CRX3 file
     private_key: RsaPrivateKey,
+    /// The ZIP content of the Chrome extension
     zip_data: Vec<u8>,
 }
 
@@ -233,7 +235,9 @@ pub struct Crx3Builder {
 /// # }
 /// ```
 pub struct Crx3File {
+    /// The CRX3 file header containing signatures and metadata
     header: CrxFileHeader,
+    /// The ZIP content of the Chrome extension
     zip_data: Vec<u8>,
 }
 
@@ -285,6 +289,16 @@ impl Crx3Builder {
         Ok(Self::new(private_key, zip_data))
     }
 
+    /// Builds a CRX3 file from the provided ZIP data and private key.
+    ///
+    /// This method performs all necessary steps to create a valid CRX3 file:
+    /// 1. Derives the extension ID from the public key
+    /// 2. Creates and signs the header data
+    /// 3. Assembles the CRX3 file structure
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the fully constructed `Crx3File` or an error
     pub fn build(self) -> Result<Crx3File> {
         // Generate public key
         let public_key = self.private_key.to_public_key();
@@ -405,6 +419,16 @@ impl Crx3File {
         Ok(Self { header, zip_data })
     }
 
+    /// Verifies the signature of the CRX3 file.
+    ///
+    /// This method verifies that the CRX3 file has a valid signature using the
+    /// embedded public key. It performs various validation checks to ensure
+    /// the file's integrity and authenticity.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating whether the verification succeeded (`Ok(())`) or
+    /// an error describing why verification failed
     pub fn verify(&self) -> Result<()> {
         // Check if there are any RSA signatures
         if self.header.sha256_with_rsa.is_empty() {
@@ -551,6 +575,17 @@ impl Crx3File {
         &self.zip_data
     }
 
+    /// Gets the Chrome extension ID in raw binary format.
+    ///
+    /// The extension ID is a 16-byte identifier derived from the public key.
+    /// This method extracts the raw ID from the CRX file's signed header data.
+    /// To get the formatted ID in Chrome's standard format, use the `format_extension_id`
+    /// function on the result of this method.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the raw extension ID as a `Vec<u8>` or an error
+    /// if no extension ID was found
     pub fn get_crx_id(&self) -> Result<Vec<u8>> {
         if let Some(signed_header_data) = &self.header.signed_header_data {
             let signed_data = SignedData::decode(&signed_header_data[..])?;
@@ -672,6 +707,20 @@ pub trait SignatureOperation {
 struct Crx3Signature;
 
 impl SignatureOperation for Crx3Signature {
+    /// Prepares data for signing or verification according to the CRX3 format specification.
+    ///
+    /// This method creates a data blob with the following format:
+    /// - Magic bytes: "CRX3 SignedData\0"
+    /// - Header size (4 bytes, little-endian)
+    /// - Header data
+    /// - ZIP content
+    ///
+    /// # Arguments
+    /// * `signed_header_data` - The encoded signed header protobuf message
+    /// * `zip_data` - The ZIP file content
+    ///
+    /// # Returns
+    /// A `Vec<u8>` containing the prepared data ready for signing or verification
     fn prepare_data(&self, signed_header_data: &[u8], zip_data: &[u8]) -> Vec<u8> {
         let signed_header_size = signed_header_data.len() as u32;
         let mut data = b"CRX3 SignedData\x00".to_vec();
@@ -681,6 +730,17 @@ impl SignatureOperation for Crx3Signature {
         data
     }
 
+    /// Signs data with the private key using PKCS#1 v1.5 with SHA-256.
+    ///
+    /// This method creates a signature for the provided data using the specified RSA private key.
+    /// It first hashes the data using SHA-256 and then signs the hash with PKCS#1 v1.5.
+    ///
+    /// # Arguments
+    /// * `private_key` - The RSA private key to sign with
+    /// * `data` - The data to sign
+    ///
+    /// # Returns
+    /// A `Result` containing the signature as a `Vec<u8>` or an error
     fn sign(&self, private_key: &RsaPrivateKey, data: &[u8]) -> Result<Vec<u8>> {
         use rsa::sha2::{Digest, Sha256};
 
@@ -695,6 +755,19 @@ impl SignatureOperation for Crx3Signature {
         Ok(signature.to_vec())
     }
 
+    /// Verifies a signature using the public key with PKCS#1 v1.5 and SHA-256.
+    ///
+    /// This method verifies that the signature for the provided data is valid using
+    /// the specified RSA public key. It first hashes the data using SHA-256 and then
+    /// verifies the signature using PKCS#1 v1.5.
+    ///
+    /// # Arguments
+    /// * `public_key` - The RSA public key to verify with
+    /// * `data` - The data that was signed
+    /// * `signature` - The signature to verify
+    ///
+    /// # Returns
+    /// A `Result` indicating whether verification succeeded (`Ok(())`) or an error
     fn verify(&self, public_key: &RsaPublicKey, data: &[u8], signature: &[u8]) -> Result<()> {
         use rsa::sha2::{Digest, Sha256};
 
