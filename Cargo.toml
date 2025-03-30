@@ -1,0 +1,21 @@
+[package]
+name = "crx3-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Chrome extension CRX3 format parser and builder in Rust"
+license = "MIT"
+repository = "https://github.com/yourusername/crx3-rs"
+keywords = ["chrome", "extension", "crx", "crx3"]
+categories = ["parser-implementations"]
+
+[dependencies]
+prost = "0.13.5"
+rsa = { version = "0.9.8", features = ["pem", "sha2"] }
+rand = "0.8.5"
+
+[build-dependencies]
+prost-build = "0.13.5"
+
+[[bin]]
+name = "crx3-rs"
+path = "src/main.rs"
