@@ -66,20 +66,27 @@ jobs:
         if: steps.check_release.outputs.result != ''
         uses: actions/github-script@v6
         with:
+          result-encoding: 'string'
           script: |
             const release = await github.rest.repos.getRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: ${{ steps.check_release.outputs.result }}
             });
-            return release.data.upload_url;
+            // Return the upload_url but remove the {?name,label} template part
+            const uploadUrl = release.data.upload_url;
+            return uploadUrl.replace(/\{.*\}$/, '');
 
       - name: Set upload URL
         id: set_upload_url
         run: |
           if [[ -n "${{ steps.create_release.outputs.upload_url }}" ]]; then
-            echo "upload_url=${{ steps.create_release.outputs.upload_url }}" >> $GITHUB_OUTPUT
+            # Remove {?name,label} template part from create_release output
+            UPLOAD_URL="${{ steps.create_release.outputs.upload_url }}"
+            UPLOAD_URL="${UPLOAD_URL%%\{*}"
+            echo "upload_url=${UPLOAD_URL}" >> $GITHUB_OUTPUT
           else
+            # get_release_url already has the template part removed
             echo "upload_url=${{ steps.get_release_url.outputs.result }}" >> $GITHUB_OUTPUT
           fi
 
