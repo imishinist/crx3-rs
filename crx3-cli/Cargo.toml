@@ -15,5 +15,5 @@ name = "crx3rs"
 path = "src/main.rs"
 
 [dependencies]
-crx3-rs.workspace = true
+crx3-rs = { version = "0.2.0", path = "../crx3-rs" }
 rsa.workspace = true
