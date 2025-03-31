@@ -29,12 +29,19 @@ jobs:
           # Extract version from tag (remove leading 'v')
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
           
-          # Extract version from Cargo.toml
-          CARGO_VERSION=$(grep -m 1 '^version =' Cargo.toml | cut -d '"' -f 2)
+          # Extract version from workspace package
+          WORKSPACE_VERSION=$(grep -m 1 '^version =' Cargo.toml | cut -d '"' -f 2 || grep -m 1 'version.workspace' crx3-rs/Cargo.toml | grep -oP 'true')
+          
+          # If using workspace version, get it from workspace
+          if [ "$WORKSPACE_VERSION" == "true" ]; then
+            CARGO_VERSION=$(grep -m 1 '^version =' Cargo.toml | cut -d '"' -f 2 || grep -m 1 'version =' -A 1 "[workspace.package]" | tail -n 1 | cut -d '"' -f 2)
+          else
+            CARGO_VERSION=$(grep -m 1 '^version =' crx3-rs/Cargo.toml | cut -d '"' -f 2)
+          fi
           
           # Compare versions
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "Error: Tag version ($TAG_VERSION) does not match version in Cargo.toml ($CARGO_VERSION)"
+            echo "Error: Tag version ($TAG_VERSION) does not match version in workspace ($CARGO_VERSION)"
             exit 1
           fi
           
@@ -43,7 +50,19 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
       
-      - name: Publish to crates.io
+      - name: Publish library to crates.io
         env:
           CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: cargo publish --token "${CRATES_IO_TOKEN}"
+        run: |
+          cd crx3-rs
+          cargo publish --token "${CRATES_IO_TOKEN}"
+          
+      - name: Wait for crates.io index update
+        run: sleep 30
+        
+      - name: Publish CLI to crates.io
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cd crx3-cli
+          cargo publish --token "${CRATES_IO_TOKEN}"

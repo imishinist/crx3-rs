@@ -2,6 +2,13 @@
 
 A Rust library and command-line tool for handling Chrome extension CRX3 format.
 
+## Project Structure
+
+This project is organized as a Cargo workspace with two crates:
+
+- **crx3-rs**: The library crate that provides the core functionality
+- **crx3-cli**: The binary crate that provides the command-line interface (CLI)
+
 ## Features
 
 - Parse Chrome extension CRX3 format
@@ -18,7 +25,7 @@ A Rust library and command-line tool for handling Chrome extension CRX3 format.
 ### From source
 
 ```
-cargo install crx3-rs
+cargo install crx3-cli
 ```
 
 ### Using cargo-binstall (Faster)
@@ -30,7 +37,7 @@ For a faster installation without compilation, you can use cargo-binstall:
 cargo install cargo-binstall
 
 # Install crx3-rs
-cargo binstall crx3-rs
+cargo binstall crx3-cli
 ```
 
 ### From repository
@@ -38,7 +45,7 @@ cargo binstall crx3-rs
 ```
 git clone https://github.com/imishinist/crx3-rs.git
 cd crx3-rs
-cargo build --release
+cargo build --release -p crx3-cli
 ```
 
 ## Usage
@@ -174,6 +181,33 @@ This project is licensed under the [MIT License](LICENSE) - see the LICENSE file
 
 - [Chrome Extension Protobuf](https://raw.githubusercontent.com/chromium/chromium/main/components/crx_file/crx3.proto)
 
-## TODO
+## Contributing
 
-- [ ] cargo-binstall support
+### Development Setup
+
+1. Clone the repository:
+```
+git clone https://github.com/imishinist/crx3-rs.git
+cd crx3-rs
+```
+
+2. Build the project:
+```
+cargo build
+```
+
+3. Run tests:
+```
+cargo test
+```
+
+### Workspace Structure
+
+The project uses a workspace layout to separate the library from the binary:
+
+- Library crate (`crx3-rs`): Contains the core functionality
+- Binary crate (`crx3-cli`): Contains the command-line interface
+
+This structure allows us to:
+- Maintain `Cargo.lock` for the binary part to ensure reproducible builds in CI
+- Follow the Rust convention of excluding `Cargo.lock` for library crates

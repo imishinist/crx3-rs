@@ -1,0 +1,19 @@
+[package]
+name = "crx3-cli"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Command line tool for CRX3 Chrome extension files"
+license.workspace = true
+repository.workspace = true
+keywords = ["chrome", "extension", "crx", "crx3", "cli"]
+categories = ["command-line-utilities"]
+publish = true
+
+[[bin]]
+name = "crx3rs"
+path = "src/main.rs"
+
+[dependencies]
+crx3-rs.workspace = true
+rsa.workspace = true
