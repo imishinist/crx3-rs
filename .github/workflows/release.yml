@@ -30,19 +30,12 @@ jobs:
           # Extract version from tag (remove leading 'v')
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
           
-          # Extract version from workspace package
-          WORKSPACE_VERSION=$(grep -m 1 '^version =' Cargo.toml | cut -d '"' -f 2 || grep -m 1 'version.workspace' crx3-rs/Cargo.toml | grep -oP 'true')
-          
-          # If using workspace version, get it from workspace
-          if [ "$WORKSPACE_VERSION" == "true" ]; then
-            CARGO_VERSION=$(grep -m 1 '^version =' Cargo.toml | cut -d '"' -f 2 || grep -m 1 'version =' -A 1 "[workspace.package]" | tail -n 1 | cut -d '"' -f 2)
-          else
-            CARGO_VERSION=$(grep -m 1 '^version =' crx3-rs/Cargo.toml | cut -d '"' -f 2)
-          fi
+          # Direct extraction from crx3-rs/Cargo.toml which has explicit version
+          CARGO_VERSION=$(grep -m 1 '^version =' crx3-rs/Cargo.toml | cut -d '"' -f 2)
           
           # Compare versions
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "Error: Tag version ($TAG_VERSION) does not match version in workspace ($CARGO_VERSION)"
+            echo "Error: Tag version ($TAG_VERSION) does not match version in crx3-rs/Cargo.toml ($CARGO_VERSION)"
             exit 1
           fi
           
