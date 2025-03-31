@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "crx3-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "crx3-rs",
  "rsa",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "crx3-rs"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "prost",
  "prost-build",
