@@ -16,4 +16,4 @@ repository = "https://github.com/imishinist/crx3-rs"
 prost = "0.13.5"
 rsa = { version = "0.9.8", features = ["pem", "sha2"] }
 rand = "0.8.5"
-crx3-rs = { path = "crx3-rs" }
+crx3-rs = { version = "0.2.0", path = "crx3-rs" }
