@@ -16,7 +16,6 @@ jobs:
     name: Create release
     runs-on: ubuntu-latest
     outputs:
-      upload_url: ${{ steps.set_upload_url.outputs.upload_url }}
       version: ${{ steps.get_version.outputs.version }}
     steps:
       - name: Get version
@@ -28,67 +27,20 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check for existing release
-        id: check_release
-        uses: actions/github-script@v6
-        with:
-          result-encoding: 'string'
-          script: |
-            try {
-              const release = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: `v${process.env.VERSION}`
-              });
-              console.log(`Release exists with ID: ${release.data.id}`);
-              return release.data.id;
-            } catch (error) {
-              console.log('Release does not exist, will create a new one');
-              return '';
-            }
-        env:
-          VERSION: ${{ steps.get_version.outputs.version }}
-
-      - name: Create release
-        id: create_release
-        if: steps.check_release.outputs.result == ''
-        uses: actions/create-release@v1
+      - name: Check for existing release and create if missing
+        run: |
+          VERSION="v${{ steps.get_version.outputs.version }}"
+          if ! gh release view "$VERSION" &>/dev/null; then
+            echo "Creating new release $VERSION"
+            gh release create "$VERSION" \
+              --title "$VERSION" \
+              --notes "Release $VERSION" \
+              --repo "${{ github.repository }}"
+          else
+            echo "Release $VERSION already exists"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v${{ steps.get_version.outputs.version }}
-          release_name: v${{ steps.get_version.outputs.version }}
-          draft: false
-          prerelease: false
-
-      - name: Get existing release URL
-        id: get_release_url
-        if: steps.check_release.outputs.result != ''
-        uses: actions/github-script@v6
-        with:
-          result-encoding: 'string'
-          script: |
-            const release = await github.rest.repos.getRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: ${{ steps.check_release.outputs.result }}
-            });
-            // Return the upload_url but remove the {?name,label} template part
-            const uploadUrl = release.data.upload_url;
-            return uploadUrl.replace(/\{.*\}$/, '');
-
-      - name: Set upload URL
-        id: set_upload_url
-        run: |
-          if [[ -n "${{ steps.create_release.outputs.upload_url }}" ]]; then
-            # Remove {?name,label} template part from create_release output
-            UPLOAD_URL="${{ steps.create_release.outputs.upload_url }}"
-            UPLOAD_URL="${UPLOAD_URL%%\{*}"
-            echo "upload_url=${UPLOAD_URL}" >> $GITHUB_OUTPUT
-          else
-            # get_release_url already has the template part removed
-            echo "upload_url=${{ steps.get_release_url.outputs.result }}" >> $GITHUB_OUTPUT
-          fi
 
   build-release:
     name: Build ${{ matrix.target }}
@@ -180,87 +132,21 @@ jobs:
           cd -
         shell: bash
 
-      - name: Check if asset exists [Windows]
-        if: matrix.os == 'windows-latest'
-        id: check_windows_asset
-        uses: actions/github-script@v6
-        env:
-          ASSET_NAME: crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip
-        with:
-          script: |
-            const fs = require('fs');
-            try {
-              const { data: release } = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: `v${{ needs.create-release.outputs.version }}`
-              });
-              
-              const existingAsset = release.assets.find(asset => asset.name === process.env.ASSET_NAME);
-              if (existingAsset) {
-                console.log(`Deleting existing asset: ${existingAsset.name}`);
-                await github.rest.repos.deleteReleaseAsset({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  asset_id: existingAsset.id
-                });
-              }
-            } catch (error) {
-              console.log('Error checking for existing asset:', error.message);
-            }
-            return '';
-
-      - name: Check if asset exists [Unix-like]
-        if: matrix.os != 'windows-latest'
-        id: check_unix_asset
-        uses: actions/github-script@v6
-        env:
-          ASSET_NAME: crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
-        with:
-          script: |
-            const fs = require('fs');
-            try {
-              const { data: release } = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: `v${{ needs.create-release.outputs.version }}`
-              });
-              
-              const existingAsset = release.assets.find(asset => asset.name === process.env.ASSET_NAME);
-              if (existingAsset) {
-                console.log(`Deleting existing asset: ${existingAsset.name}`);
-                await github.rest.repos.deleteReleaseAsset({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  asset_id: existingAsset.id
-                });
-              }
-            } catch (error) {
-              console.log('Error checking for existing asset:', error.message);
-            }
-            return '';
+      # No need to check if assets exist as we're using --clobber flag with gh release upload
 
       - name: Upload release asset [Windows]
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-release-asset@v1
+        run: |
+          gh release upload v${{ needs.create-release.outputs.version }} ./crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip
-          asset_name: crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip
-          asset_content_type: application/zip
 
       - name: Upload release asset [Unix-like]
         if: matrix.os != 'windows-latest'
-        uses: actions/upload-release-asset@v1
+        run: |
+          gh release upload v${{ needs.create-release.outputs.version }} ./crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
-          asset_name: crx3rs-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
-          asset_content_type: application/gzip
 
   generate-checksum:
     name: Generate checksums
@@ -268,47 +154,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all release assets
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const fs = require('fs');
-            const releaseTag = 'v${{ needs.create-release.outputs.version }}';
-            
-            const { data: release } = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: releaseTag,
-            });
-            
-            // Delete existing SHA256SUMS if it exists
-            const shaAsset = release.assets.find(asset => asset.name === 'SHA256SUMS');
-            if (shaAsset) {
-              console.log('Deleting existing SHA256SUMS');
-              await github.rest.repos.deleteReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                asset_id: shaAsset.id
-              });
-            }
-            
-            for (const asset of release.assets) {
-              if (asset.name === 'SHA256SUMS') continue;
-              
-              const assetName = asset.name;
-              console.log(`Downloading ${assetName}...`);
-              
-              const { data } = await github.rest.repos.getReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                asset_id: asset.id,
-                headers: {
-                  accept: 'application/octet-stream',
-                },
-              });
-              
-              fs.writeFileSync(assetName, Buffer.from(data));
-              console.log(`Downloaded ${assetName}`);
-            }
+        run: |
+          VERSION="v${{ needs.create-release.outputs.version }}"
+          echo "Downloading release assets for $VERSION"
+          
+          # Create a temporary directory
+          mkdir -p assets
+          cd assets
+          
+          # Download all assets except SHA256SUMS (we'll regenerate it)
+          gh release download "$VERSION" --pattern "crx3rs-*" --repo "${{ github.repository }}"
+          
+          # List downloaded assets
+          echo "Downloaded assets:"
+          ls -la
+          
+          # Move back to working directory
+          cd ..
+          # Move assets to working directory
+          mv assets/* .
+          rmdir assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate checksums
         run: |
@@ -318,14 +185,10 @@ jobs:
           cat SHA256SUMS
           
       - name: Upload checksums
-        uses: actions/upload-release-asset@v1
+        run: |
+          gh release upload v${{ needs.create-release.outputs.version }} ./SHA256SUMS --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./SHA256SUMS
-          asset_name: SHA256SUMS
-          asset_content_type: text/plain
 
   update-binstall-index:
     name: Update binstall index
