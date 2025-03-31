@@ -54,9 +54,3 @@ jobs:
       - name: Wait for crates.io index update
         run: sleep 30
         
-      - name: Publish CLI to crates.io
-        env:
-          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crx3-cli
-          cargo publish --token "${CRATES_IO_TOKEN}"
