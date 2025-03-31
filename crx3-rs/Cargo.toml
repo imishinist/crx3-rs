@@ -6,6 +6,7 @@ edition.workspace = true
 description = "Chrome extension CRX3 format parser and builder in Rust"
 license.workspace = true
 repository.workspace = true
+readme = '../README.md'
 keywords = ["chrome", "extension", "crx", "crx3"]
 categories = ["parser-implementations"]
 publish = true
